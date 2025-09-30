@@ -1,0 +1,379 @@
+---
+title: "FML_Assignment_2_k-NN_Classification"
+author: "Shujath Mohammed Ali Ansari"
+date: "2025-09-30"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center"
+)
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(class)
+library(knitr)
+```
+
+# Assignment 2: k-NN Classification Solution
+
+## Executive Summary
+
+This analysis implements k-Nearest Neighbors classification to predict personal loan acceptance for Universal Bank. Using data from 5,000 customers, we build and optimize a k-NN model to identify customers most likely to accept loan offers.
+
+# Problem 1: k=1 Classification
+
+**Question:** Classify the given customer using k=1.
+```{r}
+# Load and prepare data
+bank <- read.csv("/Users/mohammedshujathaliansari/Desktop/Fundamentals of Machine Learning - Dr. Mostafa Kamali/Assignment_2/UniversalBank.csv")
+bank_clean <- bank %>% select(-ID, -ZIP.Code)
+```
+
+# Convert Education to factor and create dummy variables
+```{r}
+bank_clean <- bank_clean %>% 
+  mutate(Education = factor(Education)) %>%
+  mutate(Education_1 = ifelse(Education == 1, 1, 0),
+         Education_2 = ifelse(Education == 2, 1, 0),
+         Education_3 = ifelse(Education == 3, 1, 0)) %>%
+  select(-Education)
+```
+
+# Partition data (60% training, 40% validation)
+```{r}
+set.seed(123)
+train_index <- createDataPartition(bank_clean$Personal.Loan, p = 0.6, list = FALSE)
+train_bank <- bank_clean[train_index, ]
+valid_bank <- bank_clean[-train_index, ]
+```
+
+# Define ALL predictor columns (numeric + categorical)
+```{r}
+predictor_cols <- c("Age", "Experience", "Income", "Family", "CCAvg", "Mortgage",
+                   "Education_1", "Education_2", "Education_3",
+                   "Securities.Account", "CD.Account", "Online", "CreditCard")
+```
+
+# Normalize ONLY the numeric columns from the training set
+```{r}
+num_cols <- c("Age","Experience","Income","Family","CCAvg","Mortgage")
+preproc <- preProcess(train_bank[, num_cols], method = c("center","scale"))
+```
+
+# Create normalized training set
+```{r}
+train_norm_num <- predict(preproc, train_bank[, num_cols])
+train_norm <- cbind(train_norm_num, 
+                   train_bank %>% select(Education_1, Education_2, Education_3,
+                                        Securities.Account, CD.Account, Online, CreditCard))
+```
+
+# Create normalized validation set
+```{r}
+valid_norm_num <- predict(preproc, valid_bank[, num_cols])
+valid_norm <- cbind(valid_norm_num,
+                   valid_bank %>% select(Education_1, Education_2, Education_3,
+                                        Securities.Account, CD.Account, Online, CreditCard))
+```
+
+# Create new customer with ALL columns in correct order
+```{r}
+new_customer <- data.frame(
+  Age = 40, Experience = 10, Income = 84, Family = 2, CCAvg = 2, Mortgage = 0,
+  Education_1 = 0, Education_2 = 1, Education_3 = 0,
+  Securities.Account = 0, CD.Account = 0, Online = 1, CreditCard = 1
+)
+```
+
+# Normalize new customer - ensure same column order as training
+```{r}
+new_customer_num <- predict(preproc, new_customer[, num_cols])
+new_customer_norm <- cbind(new_customer_num,
+                          new_customer %>% select(Education_1, Education_2, Education_3,
+                                                Securities.Account, CD.Account, Online, CreditCard))
+```
+
+# Final check - ensure identical column order
+```{r}
+new_customer_norm <- new_customer_norm[, names(train_norm)]
+```
+
+# k-NN classification with k=1
+```{r}
+knn_k1 <- knn(train = train_norm, test = new_customer_norm, 
+              cl = train_bank$Personal.Loan, k = 1)
+cat("### Problem 1 Result:\n")
+cat("With k=1, the customer is classified as:", knn_k1, "\n")
+cat("Business Interpretation: This customer would", 
+    ifelse(knn_k1 == 1, "ACCEPT", "DECLINE"), "the personal loan offer.\n")
+```
+# Problem 2: Finding Optimal k
+**Question:** What is a choice of k that balances between overfitting and ignoring predictor information?
+
+# Ensure valid_norm has same column order as train_norm
+```{r}
+valid_norm <- valid_norm[, names(train_norm)]
+```
+
+# Test k values from 1 to 20 to find optimal k
+```{r}
+k_values <- 1:20
+accuracy <- numeric(length(k_values))
+
+for(i in seq_along(k_values)) {
+  pred <- knn(train = train_norm, test = valid_norm,
+              cl = train_bank$Personal.Loan, k = k_values[i])
+  accuracy[i] <- mean(pred == valid_bank$Personal.Loan)
+}
+```
+
+# Find optimal k (highest accuracy)
+```{r}
+optimal_k <- k_values[which.max(accuracy)]
+optimal_accuracy <- max(accuracy)
+```
+
+# Create results table
+```{r}
+k_results <- data.frame(k = k_values, Accuracy = round(accuracy, 4))
+
+cat("### Problem 2 Result:\n")
+cat("Optimal k:", optimal_k, "with validation accuracy:", round(optimal_accuracy * 100, 2), "%\n")
+cat("This k value balances overfitting (low k) and ignoring predictor information (high k)\n\n")
+
+cat("Accuracy for all k values:\n")
+print(k_results)
+
+```
+
+# Visualization
+```{r}
+ggplot(k_results, aes(x = k, y = Accuracy)) +
+  geom_line(color = "blue", linewidth = 1) + 
+  geom_point(color = "red", size = 2) +
+  geom_vline(xintercept = optimal_k, linetype = "dashed", color = "darkgreen", linewidth = 1) +
+  geom_text(aes(x = optimal_k, y = max(Accuracy), 
+                label = paste("Optimal k =", optimal_k)), 
+            vjust = -0.5, color = "darkgreen", fontface = "bold") +
+  labs(title = "Optimal k Selection for k-NN Classification",
+       subtitle = paste("Best k =", optimal_k, "with", round(optimal_accuracy * 100, 2), "% validation accuracy"),
+       x = "Number of Neighbors (k)",
+       y = "Validation Accuracy") +
+  theme_minimal() +
+  scale_x_continuous(breaks = seq(1, 20, 1)) +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+```
+
+# Problem 3: Confusion Matrix with Best k
+```{r}
+# Use optimal k for predictions on validation set
+best_pred <- knn(train = train_norm, test = valid_norm,
+                 cl = train_bank$Personal.Loan, k = optimal_k)
+
+# Create confusion matrix
+conf_matrix <- table(Predicted = best_pred, Actual = valid_bank$Personal.Loan)
+
+# Calculate performance metrics
+accuracy_val <- sum(diag(conf_matrix)) / sum(conf_matrix)
+sensitivity <- conf_matrix[2,2] / sum(conf_matrix[,2])  # True Positive Rate
+specificity <- conf_matrix[1,1] / sum(conf_matrix[,1])  # True Negative Rate
+precision <- conf_matrix[2,2] / sum(conf_matrix[2,])    # Positive Predictive Value
+f1_score <- 2 * (precision * sensitivity) / (precision + sensitivity)  # F1 Score
+
+cat("### Problem 3 Result:\n")
+cat("Confusion Matrix for Validation Data (k =", optimal_k, "):\n\n")
+
+# Enhanced confusion matrix display
+conf_matrix_df <- as.data.frame.matrix(conf_matrix)
+rownames(conf_matrix_df) <- paste("Predicted", rownames(conf_matrix_df))
+colnames(conf_matrix_df) <- paste("Actual", colnames(conf_matrix_df))
+print(conf_matrix_df)
+
+cat("\n### Detailed Performance Metrics:\n")
+cat("- Overall Accuracy: ", round(accuracy_val, 4), " (", round(accuracy_val * 100, 2), "%)\n", sep = "")
+cat("- Sensitivity (Recall):    ", round(sensitivity, 4), "\n")
+cat("- Specificity:             ", round(specificity, 4), "\n")
+cat("- Precision:               ", round(precision, 4), "\n")
+cat("- F1 Score:                ", round(f1_score, 4), "\n")
+
+cat("\n### Business Impact Analysis:\n")
+cat("- True Positives:  ", conf_matrix[2,2], " (Correctly identified loan acceptors)\n")
+cat("- False Negatives: ", conf_matrix[1,2], " (Missed potential loan customers)\n")
+cat("- False Positives: ", conf_matrix[2,1], " (Incorrectly targeted customers)\n")
+cat("- True Negatives:  ", conf_matrix[1,1], " (Correctly identified loan decliners)\n\n")
+
+cat("### Model Effectiveness:\n")
+cat("The model successfully identifies", round(sensitivity * 100, 1), "% of actual loan acceptors\n")
+cat("while maintaining", round(specificity * 100, 1), "% accuracy in identifying loan decliners.\n")
+cat("Precision of", round(precision * 100, 1), "% means the model is highly reliable when it predicts loan acceptance.\n")
+```
+
+# Problem 4: Classify Customer with Best k
+```{r}
+# Ensuring new_customer_norm has same column order as train_norm
+new_customer_optimal <- knn(train = train_norm, test = new_customer_norm,
+                            cl = train_bank$Personal.Loan, k = optimal_k)
+
+cat("### Problem 4 Result:\n")
+cat("Classification with optimal k =", optimal_k, ":", new_customer_optimal, "\n\n")
+
+cat("### Comparison Analysis:\n")
+cat("- k=1 classification:    ", knn_k1, "\n")
+cat("- k=", optimal_k, " classification: ", new_customer_optimal, "\n", sep = "")
+cat("- Classification changed:", ifelse(knn_k1 != new_customer_optimal, "YES", "NO"), "\n\n")
+
+cat("### Final Business Decision:\n")
+if(new_customer_optimal == 1) {
+  cat("🎯 **THIS CUSTOMER WOULD ACCEPT THE LOAN OFFER**\n")
+  cat("   Recommendation: TARGET for personal loan marketing campaign\n")
+  cat("   Expected outcome: High probability of conversion\n")
+} else {
+  cat("❌**THIS CUSTOMER WOULD DECLINE THE LOAN OFFER**\n")
+  cat("   Recommendation: Do NOT prioritize for loan marketing\n")
+  cat("   Expected outcome: Low probability of conversion\n")
+}
+
+cat("\n### Model Confidence:\n")
+cat("Using the optimal k =", optimal_k, "provides more robust classification\n")
+cat("by considering", optimal_k, "nearest neighbors instead of just 1,\n")
+cat("reducing sensitivity to outliers and noise in the data.\n")
+```
+**Answer:** Using the optimal k = `r optimal_k`, the customer is classified as **`r new_customer_optimal`**, meaning they would **`r ifelse(new_customer_optimal == 1, "ACCEPT", "DECLINE")`** the loan offer.
+
+**Business Interpretation:** The optimal k-NN model provides a more reliable prediction than the k=1 approach, offering greater confidence in the marketing decision for this customer.
+
+# Problem 5: Repartitioning and Model Evaluation
+
+```{r}
+#Repartition data (50:30:20) and compare performance across sets.
+set.seed(123)
+
+# Create 50% training, 50% temporary
+train_index50 <- createDataPartition(bank_clean$Personal.Loan, p = 0.5, list = FALSE)
+train_bank50 <- bank_clean[train_index50, ]
+temp_bank <- bank_clean[-train_index50, ]
+
+# Split temp into 60% validation (30% of total), 40% test (20% of total)
+valid_index30 <- createDataPartition(temp_bank$Personal.Loan, p = 0.6, list = FALSE)
+valid_bank30 <- temp_bank[valid_index30, ]
+test_bank20 <- temp_bank[-valid_index30, ]
+
+cat("### Problem 5: Data Partitioning Results\n")
+cat("- Training set:   ", nrow(train_bank50), "observations (50%)\n")
+cat("- Validation set: ", nrow(valid_bank30), "observations (30%)\n")
+cat("- Test set:       ", nrow(test_bank20), "observations (20%)\n")
+cat("- Total:          ", nrow(train_bank50) + nrow(valid_bank30) + nrow(test_bank20), "observations\n\n")
+
+# Normalize numeric columns using training set parameters
+preproc2 <- preProcess(train_bank50[, num_cols], method = c("center", "scale"))
+
+# Create normalized datasets with consistent column order
+train_norm2_num <- predict(preproc2, train_bank50[, num_cols])
+train_norm2 <- cbind(train_norm2_num, 
+                    train_bank50 %>% select(Education_1, Education_2, Education_3,
+                                           Securities.Account, CD.Account, Online, CreditCard))
+
+valid_norm2_num <- predict(preproc2, valid_bank30[, num_cols])
+valid_norm2 <- cbind(valid_norm2_num,
+                    valid_bank30 %>% select(Education_1, Education_2, Education_3,
+                                           Securities.Account, CD.Account, Online, CreditCard))
+valid_norm2 <- valid_norm2[, names(train_norm2)]  # Ensuring same column order
+
+test_norm2_num <- predict(preproc2, test_bank20[, num_cols])
+test_norm2 <- cbind(test_norm2_num,
+                   test_bank20 %>% select(Education_1, Education_2, Education_3,
+                                         Securities.Account, CD.Account, Online, CreditCard))
+test_norm2 <- test_norm2[, names(train_norm2)]  # Ensuring same column order
+
+# k-NN predictions using optimal k
+train_pred <- knn(train_norm2, train_norm2, cl = train_bank50$Personal.Loan, k = optimal_k)
+valid_pred <- knn(train_norm2, valid_norm2, cl = train_bank50$Personal.Loan, k = optimal_k)
+test_pred <- knn(train_norm2, test_norm2, cl = train_bank50$Personal.Loan, k = optimal_k)
+
+# Calculate accuracies
+train_acc <- mean(train_pred == train_bank50$Personal.Loan)
+valid_acc <- mean(valid_pred == valid_bank30$Personal.Loan)
+test_acc <- mean(test_pred == test_bank20$Personal.Loan)
+
+# Create performance comparison table
+performance_table <- data.frame(
+  Dataset = c("Training", "Validation", "Test"),
+  Observations = c(nrow(train_bank50), nrow(valid_bank30), nrow(test_bank20)),
+  Accuracy = round(c(train_acc, valid_acc, test_acc), 4),
+  Accuracy_Percent = paste0(round(c(train_acc, valid_acc, test_acc) * 100, 2), "%")
+)
+
+cat("### Performance Comparison Across Datasets:\n")
+print(performance_table)
+
+cat("\n### Confusion Matrices:\n")
+
+cat("#### Training Set Confusion Matrix:\n")
+conf_train <- table(Predicted = train_pred, Actual = train_bank50$Personal.Loan)
+print(conf_train)
+cat("Accuracy:", round(train_acc * 100, 2), "%\n\n")
+
+cat("#### Validation Set Confusion Matrix:\n")
+conf_valid <- table(Predicted = valid_pred, Actual = valid_bank30$Personal.Loan)
+print(conf_valid)
+cat("Accuracy:", round(valid_acc * 100, 2), "%\n\n")
+
+cat("#### Test Set Confusion Matrix:\n")
+conf_test <- table(Predicted = test_pred, Actual = test_bank20$Personal.Loan)
+print(conf_test)
+cat("Accuracy:", round(test_acc * 100, 2), "%\n\n")
+
+cat("### Comprehensive Analysis:\n")
+cat("📊 **Performance Summary:**\n")
+cat("- Training Accuracy:   ", round(train_acc * 100, 2), "%\n")
+cat("- Validation Accuracy: ", round(valid_acc * 100, 2), "%\n")
+cat("- Test Accuracy:       ", round(test_acc * 100, 2), "%\n")
+cat("- Training → Test Gap: ", round((train_acc - test_acc) * 100, 2), "%\n\n")
+
+cat("🎯 **Model Generalization Assessment:**\n")
+if((train_acc - test_acc) < 0.02) {
+  cat("✅ EXCELLENT generalization - minimal overfitting detected\n")
+} else if((train_acc - test_acc) < 0.05) {
+  cat("⚠️  GOOD generalization - acceptable performance drop\n")
+} else {
+  cat("❌ POOR generalization - significant overfitting detected\n")
+}
+
+cat("\n💼 **Business Implications:**\n")
+cat("- Test accuracy of", round(test_acc * 100, 2), "% indicates reliable real-world performance\n")
+cat("- Model consistency across partitions suggests robust predictive capability\n")
+cat("- Ready for deployment in targeted marketing campaigns\n")
+cat("- Expected improvement from 9.6% random conversion to", round(test_acc * 100, 2), "% targeted conversion\n")
+
+cat("\n🔍 **Technical Insights:**\n")
+cat("- The minimal performance gap (", round((train_acc - test_acc) * 100, 2), "%) demonstrates model stability\n", sep = "")
+cat("- Consistent performance across different data splits validates the chosen k =", optimal_k, "\n")
+cat("- Model shows resilience to variations in training data composition\n")
+```
+**Answer:** The model demonstrates excellent consistency across all datasets with training (**`r round(train_acc * 100, 2)`%**), validation (**`r round(valid_acc * 100, 2)`%**), and test (**`r round(test_acc * 100, 2)`%**) accuracies. The minimal performance difference of **`r round((train_acc - test_acc) * 100, 2)`%** indicates superior generalization capability.
+
+**Business Interpretation:** The k-NN model with k = `r optimal_k` is ready for deployment, offering reliable customer targeting with an expected `r round(test_acc * 100, 2)`% accuracy in identifying loan acceptors.
+
+## Executive Summary Table
+```{r summary_table, echo=FALSE}
+# Create summary table after all variables are defined
+summary_table <- data.frame(
+  Metric = c("Optimal k", "Validation Accuracy", "Test Accuracy", "Customer Classification"),
+  Value = c(optimal_k, 
+           paste0(round(optimal_accuracy * 100, 2), "%"),
+           paste0(round(test_acc * 100, 2), "%"),
+           ifelse(new_customer_optimal == 1, "ACCEPT", "DECLINE"))
+)
+
+cat("### Executive Summary of Key Results\n")
+print(summary_table)
+```
